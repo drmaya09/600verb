@@ -658,17 +658,22 @@ function renderFolder(k){
   const sub = k==='yds'?('gün gün · '+nU+' gün') : k==='fiil'?("25'erli · "+nU+' ünite') : 'senin eklediklerin';
   app.innerHTML = `
     <div class="st-head"><button class="back" id="fdBack">‹ Ana sayfa</button><div><div class="st-title">${folderTitle(k)}</div><div class="st-sub">${sub}</div></div></div>
+    <button class="fam-cta" id="fdStat" style="margin-bottom:18px">▣ Bu klasörün kelime durumu</button>
     <div class="grid">${cards||'<div class="ed-empty">Boş.</div>'}</div>`;
   document.getElementById('fdBack').addEventListener('click', ()=> go({name:'home'}));
+  const fs2=document.getElementById('fdStat'); if(fs2) fs2.addEventListener('click', ()=> renderStats(k));
   app.querySelectorAll('.unit').forEach(el=>{ if(el.dataset.unit===undefined) return; el.addEventListener('click', ()=> go({name:'unit', unit:+el.dataset.unit})); });
 }
 
-/* ---------------- WORD STATUS (levels + per-word counts) ---------------- */
+/* ---------------- WORD STATUS (levels + per-word counts, per folder) ---------------- */
 const LV = { mastered:{t:'Ustalaşılan', c:'var(--success)'}, mid:{t:'Orta seviye', c:'var(--accent)'}, learning:{t:'Öğreniliyor', c:'var(--blue)'}, 'new':{t:'Hiç çalışılmadı', c:'var(--ink-faint)'} };
 function levelOf(id){ if(isHidden(id)) return 'hidden'; const b=boxOf(id); if(b>=5) return 'mastered'; if(b>=3) return 'mid'; if(b>=1) return 'learning'; return 'new'; }
-function statBuckets(){ const b={mastered:[],mid:[],learning:[],'new':[]}; for(let i=0;i<WORDS.length;i++){ if(isHidden(i)) continue; const l=levelOf(i); if(b[l]) b[l].push(i); } return b; }
 function statCounts(id){ const p=progress[id]||{}; return {seen:p.seen||0, ok:p.ok||0, no:p.no||0}; }
+function profScore(id){ const b=isHidden(id)?5:boxOf(id); const c=statCounts(id); const r=c.seen? c.ok/c.seen : 0; return b*1000 + r*100 + Math.min(c.seen,99)*0.1; }
 function boxDots(id){ const b=isHidden(id)?5:boxOf(id); let s=''; for(let k=1;k<=5;k++) s+=(k<=b?'●':'○'); return s; }
+function scopeIds(scope){ const a=[]; if(scope==='all'){ for(let i=0;i<WORDS.length;i++) if(!isHidden(i)) a.push(i); } else { const U=getUnits(); for(let u=0;u<U.length;u++){ if(U[u].kind===scope){ for(let i=U[u].start;i<U[u].start+U[u].len&&i<WORDS.length;i++) if(!isHidden(i)) a.push(i); } } } return a; }
+function scopeTitle(scope){ return scope==='all'?'Tüm kelimeler':folderTitle(scope); }
+function statBucketsOf(ids){ const b={mastered:[],mid:[],learning:[],'new':[]}; ids.forEach(i=>{ const l=levelOf(i); if(b[l]) b[l].push(i); }); return b; }
 function srRow(id){
   const c=statCounts(id); const col=(LV[levelOf(id)]||{}).c||'var(--ink-faint)';
   return `<div class="sr-row">
@@ -676,10 +681,13 @@ function srRow(id){
     <div class="sr-meta"><span class="sr-dots" style="color:${col}">${boxDots(id)}</span><span class="sr-counts">${c.seen}× · <b class="ok">✓${c.ok}</b> <b class="no">✗${c.no}</b></span></div>
   </div>`;
 }
-let stState={level:'learning', q:''};
+let stState={scope:'all', level:'all', q:''};
 function srFilteredIds(){
-  const b=statBuckets(); let ids=b[stState.level]||[]; const q=stState.q.trim().toLowerCase();
+  const ids0=scopeIds(stState.scope);
+  let ids = stState.level==='all' ? ids0.slice() : ids0.filter(id=>levelOf(id)===stState.level);
+  const q=stState.q.trim().toLowerCase();
   if(q) ids=ids.filter(id=> WORDS[id][0].toLowerCase().indexOf(q)>=0 || WORDS[id][1].toLowerCase().indexOf(q)>=0);
+  ids.sort((a,b)=> profScore(b)-profScore(a));
   return ids;
 }
 function refreshSrList(){
@@ -688,22 +696,25 @@ function refreshSrList(){
   cont.innerHTML = (shown.length?shown.map(srRow).join(''):'<div class="ed-empty">Bu grupta kelime yok.</div>')
     + (ids.length>shown.length?`<div class="sr-more">+${ids.length-shown.length} kelime daha — aramayla daralt</div>`:'');
 }
-function renderStats(){
+function renderStats(scope){
+  scope=scope||'all';
+  if(stState.scope!==scope){ stState.scope=scope; stState.level='all'; stState.q=''; }
   keyHandler=null;
-  const b=statBuckets();
+  const b=statBucketsOf(scopeIds(scope));
   const total=b.mastered.length+b.mid.length+b.learning.length+b['new'].length;
   const seg=['mastered','mid','learning','new'].map(k=>{ const w=total?(b[k].length/total*100):0; return `<i style="width:${w}%;background:${LV[k].c}"></i>`; }).join('');
-  const chips=['mastered','mid','learning','new'].map(k=> `<button class="lv-chip ${stState.level===k?'on':''}" data-lv="${k}" style="--lc:${LV[k].c}"><span class="lv-n">${b[k].length}</span><span class="lv-t">${LV[k].t}</span></button>`).join('');
+  const chipData=[['all','Hepsi',total,'var(--ink-dim)'],['mastered',LV.mastered.t,b.mastered.length,LV.mastered.c],['mid',LV.mid.t,b.mid.length,LV.mid.c],['learning',LV.learning.t,b.learning.length,LV.learning.c],['new',LV['new'].t,b['new'].length,LV['new'].c]];
+  const chips=chipData.map(d=>`<button class="lv-chip ${stState.level===d[0]?'on':''}" data-lv="${d[0]}" style="--lc:${d[3]}"><span class="lv-n">${d[2]}</span><span class="lv-t">${d[1]}</span></button>`).join('');
   const ids=srFilteredIds(); const shown=ids.slice(0,400);
   app.innerHTML = `
-    <div class="st-head"><button class="back" id="srBack">‹ Ana sayfa</button><div><div class="st-title">Kelime durumu</div><div class="st-sub">${total} kelime · ne kadar bildiğin</div></div></div>
+    <div class="st-head"><button class="back" id="srBack">‹ ${scope==='all'?'Ana sayfa':folderTitle(scope)}</button><div><div class="st-title">Kelime durumu</div><div class="st-sub">${scopeTitle(scope)} · ${total} kelime</div></div></div>
     <div class="lv-bar">${seg}</div>
     <div class="lv-chips">${chips}</div>
-    <div class="sr-hint">Her kelimede: kutu seviyesi (●), kaç kez geldiği (×), doğru (✓) ve yanlış (✗) sayısı.</div>
+    <div class="sr-hint">En iyi bildiklerin üstte, en zayıfların altta. Her kelimede: seviye (●), kaç kez geldiği (×), doğru (✓), yanlış (✗).</div>
     <input class="ed-search" id="srSearch" placeholder="Bu grupta ara…" value="${esc(stState.q)}" autocomplete="off" autocapitalize="none">
     <div class="sr-list" id="srList">${(shown.length?shown.map(srRow).join(''):'<div class="ed-empty">Bu grupta kelime yok.</div>')+(ids.length>shown.length?`<div class="sr-more">+${ids.length-shown.length} kelime daha — aramayla daralt</div>`:'')}</div>`;
-  document.getElementById('srBack').addEventListener('click', ()=>{ stState.q=''; go({name:'home'}); });
-  app.querySelectorAll('.lv-chip').forEach(c=> c.addEventListener('click', ()=>{ stState.level=c.dataset.lv; stState.q=''; renderStats(); }));
+  document.getElementById('srBack').addEventListener('click', ()=>{ stState.q=''; if(scope==='all') go({name:'home'}); else go({name:'folder',kind:scope}); });
+  app.querySelectorAll('.lv-chip').forEach(c=> c.addEventListener('click', ()=>{ stState.level=c.dataset.lv; stState.q=''; renderStats(scope); }));
   const se=document.getElementById('srSearch'); se.addEventListener('input', ()=>{ stState.q=se.value; refreshSrList(); });
 }
 
@@ -771,7 +782,7 @@ function renderHome(){
     startFlash(words, { label:'Tekrar', back:()=>go({name:'home'}) });
   });
   const hl=document.getElementById('hiddenLink'); if(hl) hl.addEventListener('click', renderHiddenManager);
-  const sb2=document.getElementById('statBtn'); if(sb2) sb2.addEventListener('click', renderStats);
+  const sb2=document.getElementById('statBtn'); if(sb2) sb2.addEventListener('click', ()=> renderStats('all'));
   const el2=document.getElementById('editLink'); if(el2) el2.addEventListener('click', renderEditor);
   const bl=document.getElementById('bkLink'); if(bl) bl.addEventListener('click', renderBackup);
   app.querySelectorAll('.unit.folder').forEach(b=> b.addEventListener('click', ()=> go({name:'folder', kind:b.dataset.folder})));
